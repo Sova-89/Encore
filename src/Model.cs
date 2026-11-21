@@ -37,14 +37,62 @@ namespace Encore
         }
     }
 
-    /// Одна строка пресета: босс (или скамейка) и сложность этого босса.
+    /// Одна строка пресета: босс (или скамейка), его сложность и настройка фазы в этом бою.
     [Serializable]
     public sealed class Entry
     {
         public string Boss;
         public string Difficulty = Tokens.Attuned;
+        /// Какая фаза босса остаётся в этом бою: 0 — как в игре, N — фаза N (см. Phase.cs). В файл пишется, только если не 0.
+        [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public int Phase;
+        /// Челлендж: у босса полное здоровье (без этого — тренировка с здоровьем одной фазы). Действует вместе с Phase.
+        [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public bool Full;
+        /// Лимиты призывов босса (см. SummonData.cs): 0 — как в игре, иначе «лимит+1». Первый и второй вид призыва босса.
+        [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public int Sum1;
+        [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public int Sum2;
+        /// Своё здоровье босса в этом бою (0.19.0): 0 — как в игре, иначе число от 1 до PhaseLock.HpMax. С выбранной фазой — здоровье этой фазы,
+        /// без неё — всего боя. Бой с таким здоровьем — тренировка (в статистику не идёт), «Полное здоровье» с ним не сочетается.
+        [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public int Hp;
+        /// Здоровье призывов босса (0.20.0, см. SummonData.HpKinds): 0 — как в игре, иначе число 1…PhaseLock.HpMax. Первый, второй и третий вид призыва.
+        /// Бой с таким здоровьем — тренировка (в статистику не идёт).
+        [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public int Sh1;
+        [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public int Sh2;
+        [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public int Sh3;
+        /// Бессмертие босса (0.22.0, см. Immortal.cs): босс не умирает, бой не кончается его смертью. Тренировка (в статистику не идёт).
+        /// Есть не у всех боссов — см. PhaseLock.ImmortalCapable.
+        [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public bool Imm;
+        /// Шансы призывов босса (0.26.0, см. SummonData.Chance): проценты видов (Sc1…Sc3, сумма 100) и шанс самого призыва (Sp). Лежат как «процент+1»,
+        /// 0 — как в игре. Бой с такими шансами — тренировка (в статистику не идёт).
+        [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public int Sc1;
+        [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public int Sc2;
+        [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public int Sc3;
+        [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public int Sp;
+        /// Выключенные атаки босса (0.29.0, см. AttackData.cs): маска, бит i — атака i из списка босса выключена; 0 — все включены.
+        /// Бой с выключенными атаками — тренировка (в статистику не идёт).
+        [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public int At;
 
         internal bool IsRest { get { return Boss == Tokens.Rest; } }
+        internal bool HasSummons { get { return Sum1 != 0 || Sum2 != 0; } }
+        internal bool HasHp { get { return Hp > 0; } }
+        internal bool HasSummonHp { get { return Sh1 > 0 || Sh2 > 0 || Sh3 > 0; } }
+        internal bool HasImmortal { get { return Imm; } }
+        internal bool HasChance { get { return Sc1 != 0 || Sc2 != 0 || Sc3 != 0 || Sp != 0; } }
+        internal bool HasAttacks { get { return At != 0; } }
+        internal bool HasSettings { get { return Phase != 0 || Full || HasSummons || HasHp || HasSummonHp || Imm || HasChance || HasAttacks; } }
     }
 
     [Serializable]
@@ -53,6 +101,8 @@ namespace Encore
         /// Не пустой у стандартных пресетов (нужен кнопке «вернуть стандартные»).
         public string Id;
         public string Name;
+        /// Порядок боссов спрятан: в окне вместо имён «???» (так собирается случайный пресет).
+        public bool Hidden;
         public List<Entry> Entries = new List<Entry>();
 
         internal int BossCount
@@ -62,10 +112,21 @@ namespace Encore
 
         internal Preset Clone(string newName)
         {
-            var c = new Preset { Name = newName };
-            foreach (var e in Entries) c.Entries.Add(new Entry { Boss = e.Boss, Difficulty = e.Difficulty });
+            var c = new Preset { Name = newName, Hidden = Hidden };
+            foreach (var e in Entries) c.Entries.Add(new Entry { Boss = e.Boss, Difficulty = e.Difficulty, Phase = e.Phase, Full = e.Full, Sum1 = e.Sum1, Sum2 = e.Sum2, Hp = e.Hp, Sh1 = e.Sh1, Sh2 = e.Sh2, Sh3 = e.Sh3, Imm = e.Imm, Sc1 = e.Sc1, Sc2 = e.Sc2, Sc3 = e.Sc3, Sp = e.Sp, At = e.At });
             return c;
         }
+    }
+
+    /// Старый вид настройки фазы: одна на босса для всех пресетов (до 0.15.0). Теперь настройка лежит в самой записи
+    /// пресета (Entry.Phase / Entry.Full); этот класс нужен только чтобы прочитать старый файл (см. Sanitize).
+    [Serializable]
+    public sealed class BossSetting
+    {
+        public string Boss;
+        public int Phase;
+        /// Челлендж: полное здоровье босса (без этого — тренировка с здоровьем одной фазы).
+        public bool Full;
     }
 
     [Serializable]
@@ -74,11 +135,25 @@ namespace Encore
         public int Version = 1;
         /// Имя выбранного пресета (его же запускает быстрая клавиша).
         public string Selected;
+        /// Сколько боссов собирать в случайный пресет (последнее введённое число).
+        public int RandomCount = 10;
+        /// Из каких боссов собирать случайный пресет: "p5" (боссы Пантеона 5) или "all" (все боссы GoP).
+        public string RandomPool = Pool.P5;
+        /// Последний сид случайного пресета и был ли он введён руками (введённый повторяется, придуманный модом — нет).
+        public string RandomSeed = "";
+        public bool RandomSeedTyped;
+        /// Только для чтения старого файла (до 0.15.0): при загрузке переезжает в записи пресетов и больше не пишется.
+        public List<BossSetting> Phases = new List<BossSetting>();
+        public bool ShouldSerializePhases() { return false; }
         public List<Preset> Presets = new List<Preset>();
     }
 
     internal static class PresetStore
     {
+        /// Метка пресета, в который пишутся случайные наборы.
+        internal const string RandomId = "random";
+        internal const int RandomMin = 1, RandomMax = 60;
+
         internal static Store Data = new Store();
 
         static string Dir { get { return Path.Combine(Paths.ConfigPath, "Encore"); } }
@@ -152,10 +227,188 @@ namespace Encore
             if (newName.Length == 0) return false;
             if (Data.Presets.Exists(x => x != p && x.Name == newName)) return false;
             bool wasSelected = Data.Selected == p.Name;
+            // Случайный пресет, которому дали своё имя, становится обычным: следующий бросок его не затрёт.
+            if (p.Id == RandomId && p.Name != newName) p.Id = null;
+            string oldName = p.Name;
             p.Name = newName;
             if (wasSelected) Data.Selected = newName;
             Save();
+            Stats.RenamePreset(oldName, newName);
             return true;
+        }
+
+        /// Добавляет пресет, полученный строкой от другого игрока (см. Share.cs), и выбирает его.
+        internal static Preset Import(Preset p)
+        {
+            p.Id = null;
+            if (string.IsNullOrEmpty(p.Name)) p.Name = L.T("Из строки", "Imported");
+            p.Name = UniqueName(p.Name);
+            Data.Presets.Add(p);
+            Data.Selected = p.Name;
+            Save();
+            return p;
+        }
+
+        /// Записывает случайный набор боссов в пресет «Случайный» (создаёт его, если нет) и выбирает его.
+        /// benchEvery — скамейка через каждые столько боссов (0 — без скамеек); hide — спрятать порядок в окне.
+        /// pool, seed, seedTyped запоминаются в файле, чтобы окно показало их при следующем открытии.
+        internal static Preset SetRandom(List<string> bosses, int benchEvery, bool hide, string pool, string seed, bool seedTyped)
+        {
+            Preset preset = Data.Presets.Find(p => p.Id == RandomId);
+            if (preset == null)
+            {
+                preset = new Preset { Id = RandomId, Name = UniqueName(L.T("Случайный", "Random")) };
+                Data.Presets.Add(preset);
+            }
+
+            // Сложность остаётся той, что была у пресета до броска (поставил всем Radiant — так и будет).
+            string difficulty = Tokens.Attuned;
+            foreach (Entry e in preset.Entries)
+                if (!e.IsRest) { difficulty = e.Difficulty; break; }
+
+            preset.Entries.Clear();
+            for (int i = 0; i < bosses.Count; i++)
+            {
+                if (benchEvery > 0 && i > 0 && i % benchEvery == 0) preset.Entries.Add(new Entry { Boss = Tokens.Rest });
+                preset.Entries.Add(new Entry { Boss = bosses[i], Difficulty = difficulty });
+            }
+
+            preset.Hidden = hide;
+            Data.RandomCount = bosses.Count;
+            Data.RandomPool = Pool.Normalize(pool);
+            Data.RandomSeed = seed ?? "";
+            Data.RandomSeedTyped = seedTyped;
+            Data.Selected = preset.Name;
+            Save();
+            return preset;
+        }
+
+        // ---- фаза босса в бою ---------------------------------------------------
+
+        /// Какая фаза зафиксирована у босса в этой записи пресета (PhaseLock.All — никакая) и челлендж ли это.
+        /// У скамейки и босса без настройки всегда «как в игре».
+        internal static void GetPhase(Entry e, out int phase, out bool full)
+        {
+            phase = PhaseLock.All;
+            full = false;
+            if (e == null || e.IsRest || !PhaseLock.Supports(e.Boss)) return;
+            phase = PhaseLock.Normalize(e.Boss, e.Phase);
+            full = e.Full && PhaseLock.NormalizeHp(e.Boss, e.Hp) == 0;   // своё здоровье и «полное здоровье» не сочетаются: побеждает своё
+        }
+
+        /// Своё здоровье босса в этой записи пресета (0 — как в игре). У скамейки и босса без такой настройки всегда 0.
+        internal static int GetHp(Entry e)
+        {
+            if (e == null || e.IsRest) return 0;
+            return PhaseLock.NormalizeHp(e.Boss, e.Hp);
+        }
+
+        /// Задаёт своё здоровье босса в записи (0 — как в игре). Своё здоровье выключает «Полное здоровье».
+        internal static void SetHp(Entry e, int hp)
+        {
+            if (e == null || e.IsRest || !PhaseLock.HpCapable(e.Boss)) return;
+            int value = PhaseLock.NormalizeHp(e.Boss, hp);
+            if (value == e.Hp && (value == 0 || !e.Full)) return;
+            PhaseRevision++;
+            e.Hp = value;
+            if (value > 0) e.Full = false;
+            Save();
+        }
+
+        /// Бессмертие босса в этой записи пресета. У скамейки и босса, которому его не дают (PhaseLock.ImmortalCapable), всегда false.
+        internal static bool GetImmortal(Entry e)
+        {
+            return e != null && !e.IsRest && e.Imm && PhaseLock.ImmortalCapable(e.Boss);
+        }
+
+        /// Включает или выключает бессмертие босса в записи.
+        internal static void SetImmortal(Entry e, bool on)
+        {
+            if (e == null || e.IsRest || !PhaseLock.ImmortalCapable(e.Boss)) return;
+            if (e.Imm == on) return;
+            PhaseRevision++;
+            e.Imm = on;
+            Save();
+        }
+
+        /// Проценты видов призыва у босса этой записи (длина SummonData.TypeCount). Сумма всегда 100; null — вернуть «как в игре».
+        internal static void SetTypeChances(Entry e, int[] pct)
+        {
+            if (e == null || e.IsRest || SummonData.TypeCount(e.Boss) == 0) return;
+            PhaseRevision++;
+            SummonData.SetTypes(e, pct);
+            Save();
+        }
+
+        /// Шанс самого призыва у босса этой записи, % (SummonData.Vanilla — как в игре).
+        internal static void SetCallChance(Entry e, int pct)
+        {
+            if (e == null || e.IsRest || !SummonData.HasCall(e.Boss)) return;
+            if (SummonData.GetCall(e) == pct) return;
+            PhaseRevision++;
+            SummonData.SetCall(e, pct);
+            Save();
+        }
+
+        /// Включает или выключает атаку index у босса этой записи. false — так нельзя (последнюю включённую атаку выключить не дают).
+        internal static bool SetAttack(Entry e, int index, bool off)
+        {
+            if (e == null || e.IsRest || !AttackData.Has(e.Boss)) return false;
+            int before = AttackData.Mask(e);
+            if (!AttackData.Set(e, index, off)) return false;
+            if (AttackData.Mask(e) != before) { PhaseRevision++; Save(); }
+            return true;
+        }
+
+        /// Оставляет у босса этой записи только атаку index.
+        internal static void SetOnlyAttack(Entry e, int index)
+        {
+            if (e == null || e.IsRest || !AttackData.Has(e.Boss)) return;
+            int before = AttackData.Mask(e);
+            if (!AttackData.Only(e, index) || AttackData.Mask(e) == before) return;
+            PhaseRevision++;
+            Save();
+        }
+
+        /// Включает все атаки босса этой записи.
+        internal static void ResetAttacks(Entry e)
+        {
+            if (e == null || e.IsRest || e.At == 0) return;
+            PhaseRevision++;
+            AttackData.Reset(e);
+            Save();
+        }
+
+        /// Растёт при каждом изменении настройки боссов (таблица статистики по нему узнаёт, что пора пересобраться).
+        internal static int PhaseRevision;
+
+        /// Здоровье вида призыва kind у босса этой записи (0 — как в игре).
+        internal static void SetSummonHp(Entry e, int kind, int hp)
+        {
+            if (e == null || e.IsRest || kind < 0 || kind >= SummonData.HpCount(e.Boss)) return;
+            if (SummonData.GetHp(e, kind) == SummonData.ClampHp(hp)) return;
+            PhaseRevision++;
+            SummonData.SetHp(e, kind, hp);
+            Save();
+        }
+
+        /// Лимит вида призыва kind у босса этой записи (SummonData.Vanilla — как в игре).
+        internal static void SetSummon(Entry e, int kind, int limit)
+        {
+            if (e == null || e.IsRest || kind < 0 || kind >= SummonData.Count(e.Boss)) return;
+            PhaseRevision++;
+            SummonData.Set(e, kind, limit);
+            Save();
+        }
+
+        internal static void SetPhase(Entry e, int mode, bool full)
+        {
+            if (e == null || e.IsRest || !PhaseLock.Supports(e.Boss)) return;
+            PhaseRevision++;
+            e.Phase = PhaseLock.Normalize(e.Boss, mode);
+            e.Full = full;
+            if (full) e.Hp = 0;   // «Полное здоровье» и своё здоровье не сочетаются
+            Save();
         }
 
         /// Добавляет недостающие стандартные пресеты (сегменты Пантеона 5). Возвращает, сколько добавлено.
@@ -185,7 +438,7 @@ namespace Encore
                     if (s != null && s.Presets != null && s.Presets.Count > 0)
                     {
                         Data = s;
-                        Sanitize();
+                        if (Sanitize()) Save();
                         return;
                     }
                 }
@@ -201,7 +454,8 @@ namespace Encore
             Save();
         }
 
-        static void Sanitize()
+        /// Приводит данные из файла в порядок. true — файл надо переписать (переехали старые настройки фаз).
+        static bool Sanitize()
         {
             foreach (var p in Data.Presets)
             {
@@ -210,6 +464,47 @@ namespace Encore
                 p.Entries.RemoveAll(e => e == null || string.IsNullOrEmpty(e.Boss));
                 foreach (var e in p.Entries) e.Difficulty = Tokens.NormalizeDifficulty(e.Difficulty);
             }
+            Data.RandomCount = Math.Max(RandomMin, Math.Min(RandomMax, Data.RandomCount));
+            Data.RandomPool = Pool.Normalize(Data.RandomPool);
+            Data.RandomSeed = Data.RandomSeed ?? "";
+            if (Data.RandomSeed.Length > Seed.MaxLength) Data.RandomSeed = Data.RandomSeed.Substring(0, Seed.MaxLength);
+
+            // Настройки фаз: у записей — только допустимые значения для своего босса; у скамейки и босса без фаз их нет.
+            foreach (var p in Data.Presets)
+                foreach (var e in p.Entries)
+                {
+                    int phase; bool full;
+                    GetPhase(e, out phase, out full);
+                    e.Phase = phase;
+                    e.Full = full;
+                    e.Hp = e.IsRest ? 0 : PhaseLock.NormalizeHp(e.Boss, e.Hp);
+                    SummonData.Normalize(e);
+                    SummonData.NormalizeHp(e);
+                    SummonData.NormalizeChance(e);
+                    AttackData.Normalize(e);
+                    e.Imm = !e.IsRest && e.Imm && PhaseLock.ImmortalCapable(e.Boss);
+                }
+
+            // Файл от версии до 0.15.0: одна настройка на босса для всех пресетов. Переносим её в каждую запись этого
+            // босса, у которой своей настройки ещё нет, и больше её не храним (ShouldSerializePhases).
+            bool moved = false;
+            if (Data.Phases != null)
+            {
+                var done = new List<string>();
+                foreach (BossSetting b in Data.Phases)
+                {
+                    if (b == null || !PhaseLock.Supports(b.Boss) || done.Contains(b.Boss)) continue;
+                    int mode = PhaseLock.Normalize(b.Boss, b.Phase);
+                    if (mode == PhaseLock.All && !b.Full) continue;
+                    done.Add(b.Boss);
+                    foreach (var p in Data.Presets)
+                        foreach (var e in p.Entries)
+                            if (e.Boss == b.Boss && !e.HasSettings) { e.Phase = mode; e.Full = b.Full; moved = true; }
+                }
+            }
+            if (Data.Phases != null && Data.Phases.Count > 0) moved = true;   // файл перепишем без старого списка
+            Data.Phases = new List<BossSetting>();
+            return moved;
         }
 
         internal static void Save()
@@ -245,6 +540,16 @@ namespace Encore
             new[] { "Shrine Guardian Seth", "Savage Beastfly in Far Fields", "Shakra", "Pinstress", "Skarrsinger Karmelita" },
             new[] { "Grand Mother Silk", "Lost Lace" },
         };
+
+        /// Все боссы стандартных сегментов (42 штуки, без повторов) — пул «P5» случайного пресета.
+        internal static List<string> P5Bosses()
+        {
+            var list = new List<string>();
+            foreach (string[] segment in P5)
+                foreach (string boss in segment)
+                    if (!list.Contains(boss)) list.Add(boss);
+            return list;
+        }
 
         internal static List<Preset> Build()
         {
